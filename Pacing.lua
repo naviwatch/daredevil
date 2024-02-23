@@ -1,3 +1,99 @@
+-- Nest boss logic: Intro Spiral shit
+mod:hook(BTEnterHooks, "on_skaven_warlord_intro_enter", function(func, self, unit, blackboard, t)
+    if level_key == "skaven_stronghold" then
+        return func(self, unit, blackboard, t)
+    else
+		mod:chat_broadcast("Skarrik brave-strong! Man-things not! Cut-crush!")
+    end
+end)
+
+-- Make event horde only spawn when its into the nest, lengths the time skarikk uses dual blades
+mod:hook(Breeds.skaven_storm_vermin_warlord, "run_on_update", function(func, unit, blackboard, t, dt)
+    local side = Managers.state.side.side_by_unit[unit]
+    local enemy_player_and_bot_units = side.ENEMY_PLAYER_AND_BOT_UNITS
+    local enemy_player_and_bot_positions = side.ENEMY_PLAYER_AND_BOT_POSITIONS
+    local self_pos = POSITION_LOOKUP[unit]
+    local range = BreedActions.skaven_storm_vermin_champion.special_attack_spin.radius
+    local num = 0
+    local level_key = Managers.state.game_mode:level_key()
+    for i, position in ipairs(enemy_player_and_bot_positions) do
+        local player_unit = enemy_player_and_bot_units[i]
+        if Vector3.distance(self_pos, position) < range and not ScriptUnit.extension(player_unit, "status_system"):is_disabled() and not ScriptUnit.extension(player_unit, "status_system"):is_invisible() then num = num + 1 end
+    end
+
+    blackboard.surrounding_players = num
+    if blackboard.surrounding_players > 0 then blackboard.surrounding_players_last = t end
+    if not blackboard.spawned_at_t then blackboard.spawned_at_t = t end
+    if not blackboard.has_spawned_initial_wave and blackboard.spawned_at_t + 4 < t then
+        local conflict_director = Managers.state.conflict
+        local strictly_not_close_to_players = true
+        local silent = false
+        local composition_type = "event_medium"
+        local limit_spawners, terror_event_id = nil
+        local side_id = side.side_id
+		if level_key == "skaven_stronghold" then
+            conflict_director.horde_spawner:execute_event_horde(t, terror_event_id, side_id, composition_type, limit_spawners, silent, nil, strictly_not_close_to_players)
+            blackboard.has_spawned_initial_wave = true
+        end
+    end
+
+    if blackboard.trickle_timer and blackboard.trickle_timer < t and not blackboard.defensive_mode_duration then
+        local conflict_director = Managers.state.conflict
+        if conflict_director:count_units_by_breed("skaven_slave") < 10 and level_key == "skaven_stronghold"  then
+            local strictly_not_close_to_players = true
+            local silent = true
+            local composition_type = "stronghold_boss_trickle"
+            local limit_spawners, terror_event_id = nil
+            local side_id = side.side_id
+            conflict_director.horde_spawner:execute_event_horde(t, terror_event_id, side_id, composition_type, limit_spawners, silent, nil, strictly_not_close_to_players)
+            blackboard.trickle_timer = t + 500
+        else
+            blackboard.trickle_timer = t + 500
+        end
+    end
+
+    local breed = blackboard.breed
+    if blackboard.dual_wield_mode then
+        local hp = ScriptUnit.extension(blackboard.unit, "health_system"):current_health_percent()
+        if blackboard.current_phase == 1 and hp < 0.95 then
+            blackboard.current_phase = 2
+            blackboard.dual_wield_timer = t + 2
+            blackboard.dual_wield_mode = false
+        end
+
+        if (blackboard.dual_wield_timer < t and not blackboard.active_node) or blackboard.defensive_mode_duration then
+            blackboard.dual_wield_timer = t + 2
+            blackboard.dual_wield_mode = true
+        end
+    else
+        local hp = ScriptUnit.extension(blackboard.unit, "health_system"):current_health_percent()
+        if blackboard.current_phase == 2 and hp < 0.15 then
+            blackboard.current_phase = 3
+            local new_run_speed = breed.angry_run_speed
+            blackboard.run_speed = new_run_speed
+            if not blackboard.run_speed_overridden then blackboard.navigation_extension:set_max_speed(new_run_speed) end
+        elseif blackboard.current_phase == 1 and hp < 0.95 then
+            blackboard.current_phase = 2
+        end
+
+        if blackboard.defensive_mode_duration then
+            if not blackboard.defensive_mode_duration_at_t then blackboard.defensive_mode_duration_at_t = t + blackboard.defensive_mode_duration - 10 end
+            if blackboard.defensive_mode_duration_at_t <= t then
+                blackboard.defensive_mode_duration = nil
+                blackboard.defensive_mode_duration_at_t = nil
+            else
+                blackboard.defensive_mode_duration = t - blackboard.defensive_mode_duration_at_t
+                blackboard.dual_wield_mode = false
+            end
+        elseif blackboard.dual_wield_timer < t and not blackboard.active_node then
+            blackboard.dual_wield_mode = true
+            blackboard.dual_wield_timer = 2
+        end
+    end
+
+    if blackboard.displaced_units then AiUtils.push_intersecting_players(unit, unit, blackboard.displaced_units, breed.displace_players_data, t, dt) end
+end)
+
 	-- Gas duration
 	BreedActions.skaven_poison_wind_globadier.throw_poison_globe.duration = 6.5 --8
 	-- Gas throw cooldown so you dont get barraged by gas artillery
